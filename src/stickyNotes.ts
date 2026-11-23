@@ -1,3 +1,4 @@
+import { bringToFront } from "./window";
 // src/stickyNotes.ts
 
 export interface StickyNoteData {
@@ -18,7 +19,7 @@ const TODO_NOTE_ID = "todo-note";
 let notes: StickyNoteData[] = [];
 const noteWindows = new Map<string, HTMLDivElement>();
 
-let noteZ = 200;
+
 
 // list window + list body ref so we can re-render
 let notesListWindow: HTMLDivElement | null = null;
@@ -82,8 +83,7 @@ function saveNotes() {
 }
 
 function bringNoteToFront(win: HTMLDivElement) {
-  noteZ += 1;
-  win.style.zIndex = String(noteZ);
+  bringToFront(win);
 }
 
 // Helper: re-render the list UI if it's open
@@ -118,8 +118,9 @@ Desktop OS inspired by other portfolios:
 • https://joan-os.vercel.app/
 • https://henryheffernan.com/
 
-Wallpaper created using Vanta.js:
-• https://www.vantajs.com/
+Pastel wallpaper generated with OpenAI ImageGen.
+Desktop icons: Phosphor Icons (MIT)
+• https://phosphoricons.com/
 
 Most icons taken and edited from:
 • https://www.flaticon.com/
@@ -167,12 +168,11 @@ function createTodoNote() {
       width: 260,
       height: 220,
       color: "#D7F0FF",
-      isOpen: true,
+      isOpen: false,
     };
     notes.push(todo);
   }
 
-  todo.isOpen = true;
   saveNotes();
 }
 const NOTE_COLORS = ["#D7F0FF", "#FFE58A", "#FFD6E7", "#E0FFE0"];

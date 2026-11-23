@@ -1,6 +1,8 @@
+import { initInterests, initSecret } from "./personality";
+import { openNotesListWindow } from "./stickyNotes";
 // src/windows.ts
 import type { DesktopIcon } from "./desktop";
-import { notifyTaskbarUpdate } from "./desktop";
+import { APP_ICONS, PLACEHOLDER_ICONS, notifyTaskbarUpdate } from "./desktop";
 import { DEVLOG_APP_HTML, initDevLogApp } from "./devlog";
 import { CONSOLE_APP_HTML, initConsoleApp } from "./console";
 
@@ -13,7 +15,7 @@ type AppInstance = {
 };
 
 const runningApps = new Map<string, AppInstance>();
-let zCounter = 1;
+let zCounter = 300;
 
 // NEW: Export function to get list of running app IDs
 export function getRunningAppIds(): string[] {
@@ -213,9 +215,7 @@ const PHOTOS_APP_HTML = `
       <button class="photos-grid__item" type="button">
         <img src="/photos/photo2.jpg" alt="Photo 2" />
       </button>
-      <button class="photos-grid__item" type="button">
-        <img src="/photos/photo3.jpg" alt="Photo 3" />
-      </button>
+
       <!-- add more as needed -->
     </div>
   </section>
@@ -274,9 +274,12 @@ export function createWindowsLayer(): HTMLElement {
   return layer;
 }
 
-function bringToFront(win: HTMLDivElement) {
+export function bringToFront(win: HTMLDivElement) {
+  document.querySelectorAll(".desktop-window--focused").forEach(el => el.classList.remove("desktop-window--focused"));
+  win.classList.add("desktop-window--focused");
   zCounter += 1;
   win.style.zIndex = String(zCounter);
+  syncTaskbar();
 }
 
 // ---- Resize handles ----
@@ -465,6 +468,7 @@ function createWindowShell(
 ): { win: HTMLDivElement; content: HTMLDivElement } {
   const win = document.createElement("div");
   win.className = "desktop-window";
+  win.dataset.appId = appId;
 
   // some default size/position
   // default size/position: almost full screen
@@ -474,10 +478,10 @@ function createWindowShell(
 
   // slightly skinnier
   const widthFactor = 0.65; // was 0.75
-  const heightFactor = 0.7; // keep this the same
+  const heightFactor = 0.82; // keep this the same
 
-  const defaultWidth = containerRect.width * widthFactor;
-  const defaultHeight = containerRect.height * heightFactor;
+  const defaultWidth = Math.min(1000, Math.max(Math.min(640, containerRect.width - 24), containerRect.width * widthFactor));
+  const defaultHeight = Math.min(610, Math.max(Math.min(420, containerRect.height - 24), containerRect.height * heightFactor));
 
   const left = (containerRect.width - defaultWidth) / 2;
   const top = (containerRect.height - defaultHeight) / 2;
@@ -521,12 +525,16 @@ function createWindowShell(
   closeIcon.className = "fa-solid fa-xmark";
   closeBtn.appendChild(closeIcon);
 
+  minimizeBtn.setAttribute("aria-label", "Minimize");
+  maximizeBtn.setAttribute("aria-label", "Maximize or restore");
+  closeBtn.setAttribute("aria-label", "Close");
   controls.appendChild(minimizeBtn);
   controls.appendChild(maximizeBtn);
   controls.appendChild(closeBtn);
 
   titlebar.appendChild(titleSpan);
   titlebar.appendChild(controls);
+  titlebar.addEventListener("dblclick", event => { if (!(event.target as HTMLElement).closest("button")) maximizeBtn.click(); });
 
   const content = document.createElement("div");
   content.className = "desktop-window__content";
@@ -537,6 +545,7 @@ function createWindowShell(
   windowsLayer.appendChild(win);
   // 🔹 Make window draggable via titlebar
   titlebar.addEventListener("mousedown", (event) => {
+    if (event.button !== 0) return;
     // Don't start drag when clicking control buttons
     const target = event.target as HTMLElement;
     if (target.closest(".desktop-window__button")) {
@@ -583,6 +592,7 @@ function createWindowShell(
     if (!inst) return;
     inst.minimized = true;
     win.style.display = "none";
+    syncTaskbar();
     inst.taskbarButton?.classList.add("taskbar__app-icon--minimized");
   });
 
@@ -816,19 +826,29 @@ export function openApp(
   if (existing) {
     const win = existing.win;
     if (existing.minimized) {
-      win.style.display = "block";
+      win.style.display = "flex";
       existing.minimized = false;
       existing.taskbarButton?.classList.remove("taskbar__app-icon--minimized");
       bringToFront(win);
-    } else {
+    } else if (taskbarButton && win.classList.contains("desktop-window--focused")) {
       win.style.display = "none";
       existing.minimized = true;
       existing.taskbarButton?.classList.add("taskbar__app-icon--minimized");
-    }
+    } else { bringToFront(win); }
+    syncTaskbar();
     return;
   }
 
+  if (icon.appId === "home") { openHomeWindow(windowsLayer); return; }
+
   // Not running yet → look up config
+  if (icon.appId === "interests" || icon.appId === "secret") {
+    const { content } = createWindowShell(windowsLayer, icon.appId, icon.label);
+    content.classList.add("personality-content");
+    if (icon.appId === "interests") initInterests(content, () => openApp(windowsLayer, PLACEHOLDER_ICONS.find(item => item.appId === "secret")!));
+    else initSecret(content);
+    return;
+  }
   const config = APP_REGISTRY[icon.appId];
 
   if (!config) {
@@ -868,4 +888,94 @@ export function openApp(
       taskbarButton
     );
   }
+}
+
+function openHomeWindow(windowsLayer: HTMLElement): void {
+  const { win, content } = createWindowShell(windowsLayer, "home", "Home");
+  win.classList.add("desktop-window--home");
+  content.classList.add("home-content");
+  const folders = [
+    { appId: "interests", label: "Currently into", detail: "A few rabbit holes", symbol: "sparkle", tone: "yellow" },
+    { appId: "projects", label: "Projects", detail: "Selected work", symbol: "file-text", tone: "lavender" },
+    { appId: "photos", label: "Photos", detail: "A few moments", symbol: "image", tone: "peach" },
+    { appId: "about", label: "Personal", detail: "A little about me", symbol: "leaf", tone: "blue" },
+    { appId: "playground", label: "Playground", detail: "Explore & discover", symbol: "paint-brush", tone: "yellow" },
+    { appId: "resume", label: "Resume", detail: "Experience & skills", symbol: "file-text", tone: "sage" },
+    { appId: "contact", label: "Contact", detail: "Say hello", symbol: "envelope-simple", tone: "rose" },
+  ];
+  content.innerHTML = `
+    <div class="home-toolbar">
+      <button class="home-reset" aria-label="Return to Home"><i class="ph ph-arrow-left"></i></button>
+      <button class="home-reset" aria-label="Show all folders"><i class="ph ph-arrow-up"></i></button>
+      <div class="home-address"><i class="ph-fill ph-folder"></i><span>Home</span><i class="ph ph-caret-right"></i></div>
+      <label class="home-search"><i class="ph ph-magnifying-glass"></i><input type="search" placeholder="Search Home" aria-label="Search Home"></label>
+    </div>
+    <div class="home-layout">
+      <nav class="home-sidebar" aria-label="Apps">
+        <button class="home-reset is-selected"><i class="ph-fill ph-house"></i>Home</button>
+        ${["resume", "photos", "projects", "credits", "contact"].map(id => `<button data-open="${id}"><i class="ph-fill ph-${APP_ICONS[id]}"></i>${{resume: "Documents", photos: "Pictures", projects: "Projects", credits: "Notes", contact: "Contact"}[id]}</button>`).join("")}
+      </nav>
+      <div class="home-files"><div class="folder-grid">
+        ${folders.map(f => `<button class="folder-card ${f.tone}" data-open="${f.appId}" data-name="${f.label.toLowerCase()}"><span class="folder-art"><i class="ph-fill ph-folder folder-base"></i><i class="ph-fill ph-${f.symbol} folder-symbol"></i></span><span class="folder-label">${f.label}</span><span class="folder-detail">${f.detail}</span></button>`).join("")}
+      </div><p class="home-empty" hidden>No folders found. Try another search.</p></div>
+    </div>`;
+  const search = content.querySelector<HTMLInputElement>("input")!;
+  const filter = () => {
+    let count = 0;
+    content.querySelectorAll<HTMLElement>(".folder-card").forEach(card => {
+      card.hidden = !card.dataset.name!.includes(search.value.trim().toLowerCase());
+      if (!card.hidden) count++;
+    });
+    content.querySelector<HTMLElement>(".home-empty")!.hidden = count > 0;
+  };
+  search.addEventListener("input", filter);
+  content.querySelectorAll(".home-reset").forEach(button => button.addEventListener("click", () => { search.value = ""; filter(); }));
+  content.querySelectorAll<HTMLElement>("[data-open]").forEach(button => button.addEventListener("click", () => {
+    const id = button.dataset.open!;
+    if (id === "credits") { openNotesListWindow(windowsLayer); return; }
+    const icon = PLACEHOLDER_ICONS.find(item => item.appId === id)!;
+    const existing = runningApps.get(id);
+    if (existing) { existing.minimized = false; existing.win.style.display = "flex"; bringToFront(existing.win); }
+    else openApp(windowsLayer, icon);
+  }));
+}
+
+export function syncTaskbar() {
+  document.querySelectorAll<HTMLElement>(".taskbar__app-icon").forEach(button => {
+    const app = runningApps.get(button.dataset.appId || "");
+    button.classList.toggle("taskbar__app-icon--minimized", !!app?.minimized);
+    button.classList.toggle("taskbar__app-icon--focused", !!app && !app.minimized && app.win.classList.contains("desktop-window--focused"));
+  });
+}
+export function windowAction(action: "minimize" | "close" | "maximize" | "left" | "right" | "restore", id?: string) {
+  const app = id ? runningApps.get(id) : [...runningApps.values()].filter(a => !a.minimized).sort((a,b) => +b.win.style.zIndex - +a.win.style.zIndex)[0];
+  if (!app) return;
+  if (action === "restore") { app.minimized = false; app.win.style.display = "flex"; bringToFront(app.win); return; }
+  if (action === "left" || action === "right") {
+    const layer = app.win.parentElement!;
+    if (!app.maximized) app.prevBounds = {left: app.win.offsetLeft, top: app.win.offsetTop, width: app.win.offsetWidth, height: app.win.offsetHeight};
+    app.maximized = true;
+    app.minimized = false;
+    app.win.classList.add("desktop-window--maximized");
+    const width = layer.clientWidth < 640 ? layer.clientWidth - 24 : (layer.clientWidth - 36) / 2;
+    Object.assign(app.win.style, {display: "flex", left: `${action === "right" ? layer.clientWidth - width - 12 : 12}px`, top: "12px", width: `${width}px`, height: `${layer.clientHeight - 24}px`});
+    bringToFront(app.win);
+  } else app.win.querySelector<HTMLButtonElement>(`.desktop-window__button--${action}`)?.click();
+}
+let desktopHidden = false;
+let hiddenApps: string[] = [];
+let hiddenNotes: HTMLElement[] = [];
+export function toggleDesktop() {
+  if (!desktopHidden) {
+    hiddenApps = [...runningApps].filter(([,a]) => !a.minimized).map(([id]) => id);
+    hiddenApps.forEach(id => windowAction("minimize", id));
+    hiddenNotes = Array.from(document.querySelectorAll<HTMLElement>(".desktop-window--note, .desktop-window--note-list")).filter(note => note.style.display !== "none");
+    hiddenNotes.forEach(note => { note.style.display = "none"; });
+  } else { hiddenApps.forEach(id => windowAction("restore", id)); hiddenNotes.forEach(note => { if (note.isConnected) note.style.display = "flex"; }); }
+  desktopHidden = !desktopHidden;
+}
+export function cycleWindows() {
+  const apps = [...runningApps.values()].sort((a,b) => +a.win.style.zIndex - +b.win.style.zIndex);
+  const app = apps[0];
+  if (app) { app.minimized = false; app.win.style.display = "flex"; bringToFront(app.win); }
 }

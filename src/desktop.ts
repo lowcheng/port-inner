@@ -1,11 +1,12 @@
+import { initShell } from "./shell";
 // src/desktop.ts
-import { createWindowsLayer, openApp, getRunningAppIds } from "./window";
+import { createWindowsLayer, openApp, getRunningAppIds, syncTaskbar } from "./window";
 import { initStickyNotes, openNotesListWindow } from "./stickyNotes";
 
 const CELL_WIDTH = 104;
 const CELL_HEIGHT = 104;
 const DESKTOP_PADDING = 16;
-const TASKBAR_HEIGHT = 52;
+const TASKBAR_HEIGHT = 76;
 
 export interface DesktopIcon {
   id: string;
@@ -14,6 +15,7 @@ export interface DesktopIcon {
   gridCol: number;
   gridRow: number;
   iconSrc?: string;
+  hidden?: boolean;
   pinned?: boolean; // NEW: whether app is pinned to taskbar
 }
 
@@ -24,90 +26,18 @@ interface GridLayout {
 
 let selectedIconId: string | null = null;
 let currentLayout: GridLayout | null = null;
-const PLACEHOLDER_ICONS: DesktopIcon[] = [
-  {
-    id: "icon-about",
-    appId: "about",
-    label: "About",
-    gridCol: 0,
-    gridRow: 0,
-    iconSrc: "/icons/about.png",
-    pinned: true, // Pinned to taskbar
-  },
-  {
-    id: "icon-projects",
-    appId: "projects",
-    label: "Projects",
-    gridCol: 0,
-    gridRow: 1,
-    iconSrc: "/icons/projects.png",
-    pinned: true, // Pinned to taskbar
-  },
-  {
-    id: "icon-contact",
-    appId: "contact",
-    label: "Contact",
-    gridCol: 0,
-    gridRow: 2,
-    iconSrc: "/icons/contact.png",
-    pinned: false, // NOT pinned - only shows when open
-  },
-
-  {
-    id: "icon-resume",
-    appId: "resume",
-    label: "Resume",
-    gridCol: 0,
-    gridRow: 3,
-    iconSrc: "/icons/resume.png",
-    pinned: false, // Pinned to taskbar
-  },
-
-  {
-    id: "icon-playground",
-    appId: "playground",
-    label: "Browser",
-    gridCol: 1,
-    gridRow: 0,
-    iconSrc: "/icons/browser.png",
-    pinned: true, // Pinned to taskbar
-  },
-  {
-    id: "icon-credits",
-    appId: "credits",
-    label: "Credits",
-    gridCol: 1,
-    gridRow: 1,
-    iconSrc: "/icons/credits.png",
-    pinned: true, // Pinned to taskbar
-  },
-  // {
-  //   id: "icon-photos",
-  //   appId: "photos",
-  //   label: "Photos",
-  //   gridCol: 1,
-  //   gridRow: 2,
-  //   iconSrc: "/icons/photos.png", // add this asset
-  //   pinned: false,
-  // },
-  // {
-  //   id: "icon-devlog",
-  //   appId: "devlog",
-  //   label: "Dev Log",
-  //   gridCol: 2,
-  //   gridRow: 0,
-  //   iconSrc: "/icons/devlog.png",
-  //   pinned: false,
-  // },
-  // {
-  //   id: "icon-console",
-  //   appId: "console",
-  //   label: "Console",
-  //   gridCol: 2,
-  //   gridRow: 1,
-  //   iconSrc: "/icons/console.png",
-  //   pinned: false,
-  // },
+export const APP_ICONS: Record<string, string> = { home: "house", about: "user", projects: "folder", contact: "envelope-simple", resume: "file-text", playground: "globe", credits: "note", photos: "image", interests: "sparkle", secret: "file-lock" };
+export const PLACEHOLDER_ICONS: DesktopIcon[] = [
+  { id: "icon-home", appId: "home", label: "Home", gridCol: 0, gridRow: 0, pinned: true },
+  { id: "icon-credits", appId: "credits", label: "Notes", gridCol: 0, gridRow: 1, pinned: true },
+  { id: "icon-photos", appId: "photos", label: "Gallery", gridCol: 0, gridRow: 2, pinned: true },
+  { id: "icon-about", appId: "about", label: "About", gridCol: 0, gridRow: 3 },
+  { id: "icon-projects", appId: "projects", label: "Projects", gridCol: 0, gridRow: 4, pinned: true },
+  { id: "icon-contact", appId: "contact", label: "Contact", gridCol: 0, gridRow: 5 },
+  { id: "icon-resume", appId: "resume", label: "Resume", gridCol: 1, gridRow: 0 },
+  { id: "icon-playground", appId: "playground", label: "Browser", gridCol: 1, gridRow: 1, pinned: true },
+  { id: "icon-interests", appId: "interests", label: "Currently into", gridCol: 1, gridRow: 2 },
+  { id: "icon-secret", appId: "secret", label: "Do not open", gridCol: 1, gridRow: 3, hidden: true },
 ];
 
 function computeGridLayout(root: HTMLElement): GridLayout {
@@ -171,14 +101,17 @@ function createIconElement(
   const glyph = document.createElement("div");
   glyph.className = "desktop-icon__glyph";
 
-  if (icon.iconSrc) {
-    const img = document.createElement("img");
-    img.src = icon.iconSrc;
-    img.alt = icon.label;
-    img.className = "desktop-icon__image";
-    img.draggable = false;
-    glyph.appendChild(img);
-  }
+  glyph.innerHTML = `<i class="ph-fill ph-${APP_ICONS[icon.appId]}" aria-hidden="true"></i>`;
+  container.dataset.appId = icon.appId;
+  container.tabIndex = 0;
+  container.setAttribute("role", "button");
+  container.setAttribute("aria-label", `Open ${icon.label}`);
+  container.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      container.dispatchEvent(new MouseEvent("dblclick"));
+    }
+  });
 
   const label = document.createElement("div");
   label.className = "desktop-icon__label";
@@ -372,8 +305,21 @@ function renderIcons(
 ): void {
   container.innerHTML = "";
 
+  const layout = currentLayout;
+  const occupied = new Set<string>();
   for (const icon of icons) {
-    const { x, y } = gridToPixel(icon.gridCol, icon.gridRow);
+    if (icon.hidden) continue;
+    let col = icon.gridCol;
+    let row = icon.gridRow;
+    if (layout && (col >= layout.columns || row >= layout.rows || occupied.has(`${col},${row}`))) {
+      for (let cell = 0; cell < layout.columns * layout.rows; cell++) {
+        const candidateCol = Math.floor(cell / layout.rows);
+        const candidateRow = cell % layout.rows;
+        if (!occupied.has(`${candidateCol},${candidateRow}`)) { col = candidateCol; row = candidateRow; break; }
+      }
+    }
+    occupied.add(`${col},${row}`);
+    const { x, y } = gridToPixel(col, row);
     const el = createIconElement(
       icon,
       root,
@@ -432,7 +378,9 @@ function createTaskbar(
   startButton.className = "taskbar__start";
   const startIcon = document.createElement("span");
   startIcon.className = "taskbar__start-icon";
-  startIcon.textContent = "❖";
+  startIcon.innerHTML = '<i class="ph-fill ph-circles-four" aria-hidden="true"></i>';
+  startButton.setAttribute("aria-label", "Open app launcher");
+
   startButton.appendChild(startIcon);
   left.appendChild(startButton);
 
@@ -466,14 +414,8 @@ function createTaskbar(
       appBtn.title = icon.label;
       appBtn.dataset.appId = icon.appId;
 
-      if (icon.iconSrc) {
-        const img = document.createElement("img");
-        img.src = icon.iconSrc;
-        img.alt = icon.label;
-        img.className = "taskbar__app-icon-img";
-        img.draggable = false;
-        appBtn.appendChild(img);
-      }
+      appBtn.setAttribute("aria-label", `Open ${icon.label}`);
+      appBtn.innerHTML = `<i class="ph-fill ph-${APP_ICONS[icon.appId]}" aria-hidden="true"></i>`;
 
       // Add indicator for open apps (Windows-style underline)
       const indicator = document.createElement("div");
@@ -499,6 +441,7 @@ function createTaskbar(
         openApp(windowsLayer, icon, appBtn);
       });
     }
+    syncTaskbar();
   };
 
   // Initial render
@@ -506,7 +449,17 @@ function createTaskbar(
 
   const clock = document.createElement("div");
   clock.className = "taskbar__clock";
-  clock.textContent = "12:34";
+  const updateClock = () => {
+    clock.textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    clock.title = new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+  };
+  updateClock();
+  window.setInterval(updateClock, 1000);
+  const status = document.createElement("div");
+  status.className = "taskbar__status";
+  status.setAttribute("aria-label", "Personal desktop");
+  status.innerHTML = '<i class="ph ph-wifi-high" aria-hidden="true"></i><i class="ph ph-speaker-high" aria-hidden="true"></i><i class="ph ph-battery-high" aria-hidden="true"></i>';
+  right.appendChild(status);
   right.appendChild(clock);
 
   bar.appendChild(left);
@@ -520,7 +473,7 @@ export function initDesktop(root: HTMLElement): void {
   root.classList.add("desktop");
 
   const iconsLayer = document.createElement("div");
-  iconsLayer.className = "desktop-icons-layer desktop-icons-layer--show-grid";
+  iconsLayer.className = "desktop-icons-layer";
   iconsLayer.style.top = "0";
   iconsLayer.style.left = "0";
   iconsLayer.style.right = "0";
@@ -540,7 +493,9 @@ export function initDesktop(root: HTMLElement): void {
   root.appendChild(iconsLayer);
   root.appendChild(windowsLayer);
   root.appendChild(taskbar);
+  initShell(root, windowsLayer, taskbar);
   initStickyNotes(windowsLayer);
+  openApp(windowsLayer, PLACEHOLDER_ICONS.find(icon => icon.appId === "home")!);
 
   currentLayout = computeGridLayout(root);
   renderIcons(
@@ -558,6 +513,15 @@ export function initDesktop(root: HTMLElement): void {
   window.addEventListener("resize", () => {
     const newLayout = computeGridLayout(root);
     currentLayout = newLayout;
+    windowsLayer.querySelectorAll<HTMLElement>(".desktop-window").forEach(win => {
+      if (win.style.display === "none") return;
+      const width = Math.min(win.offsetWidth, windowsLayer.clientWidth - 24);
+      const height = Math.min(win.offsetHeight, windowsLayer.clientHeight - 24);
+      win.style.width = `${width}px`;
+      win.style.height = `${height}px`;
+      win.style.left = `${Math.max(12, Math.min(win.offsetLeft, windowsLayer.clientWidth - width - 12))}px`;
+      win.style.top = `${Math.max(12, Math.min(win.offsetTop, windowsLayer.clientHeight - height - 12))}px`;
+    });
     renderIcons(
       iconsLayer,
       PLACEHOLDER_ICONS,

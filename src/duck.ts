@@ -1,163 +1,59 @@
-// src/duck.ts
-
-export class Duck {
-  private container: HTMLElement;
-  private duckBody: HTMLElement;
-  private x: number = 0;
-  private y: number = 0;
-  private targetX: number = 0;
-  private targetY: number = 0;
-  private speed: number = 0.08;
-  private angle: number = 0;
-  private targetAngle: number = 0;
-  private animationFrame: number | null = null;
-  private isWalking: boolean = false;
-
-  constructor(parent: HTMLElement) {
-    const { container, body } = this.createDuckElement();
-    this.container = container;
-    this.duckBody = body;
-    parent.appendChild(this.container);
-
-    // Start in center
-    this.x = window.innerWidth / 2;
-    this.y = window.innerHeight / 2;
-    this.targetX = this.x;
-    this.targetY = this.y;
-
-    this.setupEventListeners();
-    this.animate();
-  }
-
-  private createDuckElement(): { container: HTMLElement; body: HTMLElement } {
-    const container = document.createElement("div");
-    container.className = "desktop-duck";
-
-    const body = document.createElement("div");
-    body.className = "duck-body";
-    body.innerHTML = `
-      <svg width="80" height="80" viewBox="0 0 80 80" class="duck-svg">
-        <!-- Shadow (draw first, underneath) -->
-        <ellipse cx="40" cy="64" rx="18" ry="4" fill="rgba(0,0,0,0.1)"/>
-        
-        <!-- Body (round/oval) -->
-        <ellipse cx="35" cy="45" rx="20" ry="16" fill="white"/>
-        
-        <!-- Neck (elongated, better connected to body) -->
-        <ellipse cx="50" cy="35" rx="6" ry="13" fill="white"/>
-        
-        <!-- Head (small round) -->
-        <circle cx="54" cy="24" r="9" fill="white"/>
-        
-        <!-- Beak (orange, longer and lower) -->
-        <ellipse cx="61" cy="25" rx="7" ry="3" fill="#FFA500"/>
-        
-        <!-- Eye -->
-        <circle cx="53" cy="23" r="2.5" fill="#000"/>
-        
-        <!-- Feet (lower and more centered under body) -->
-        <g class="duck-feet">
-          <!-- Left foot -->
-          <ellipse cx="32" cy="60" rx="4.5" ry="3" fill="#FFA500"/>
-          <!-- Right foot -->
-          <ellipse cx="42" cy="60" rx="4.5" ry="3" fill="#FFA500"/>
-        </g>
-      </svg>
-    `;
-
-    container.appendChild(body);
-    return { container, body };
-  }
-
-  private setupEventListeners(): void {
-    window.addEventListener("mousemove", (e) => {
-      this.targetX = e.clientX;
-      this.targetY = e.clientY;
-    });
-  }
-
-  private normalizeAngle(angle: number): number {
-    while (angle > 180) angle -= 360;
-    while (angle < -180) angle += 360;
-    return angle;
-  }
-
-  private updateTransform(): void {
-    // Use the angle directly from atan2
-    // 0° = right, 90° = down, 180° = left, -90° = up
-
-    // Normalize to 0-360 for flipping logic
-    let normalizedAngle = this.angle % 360;
-    if (normalizedAngle < 0) normalizedAngle += 360;
-
-    // Flip horizontally when facing left (90-270 degrees)
-    const facingLeft = normalizedAngle > 90 && normalizedAngle < 270;
-
-    if (facingLeft) {
-      // Flip horizontally and adjust rotation to compensate
-      const adjustedAngle = 180 - normalizedAngle;
-      this.duckBody.style.transform = `scaleX(-1) rotate(${adjustedAngle}deg)`;
-    } else {
-      // Normal orientation - just rotate
-      this.duckBody.style.transform = `rotate(${this.angle}deg)`;
-    }
-  }
-
-  private animate = (): void => {
-    const dx = this.targetX - this.x;
-    const dy = this.targetY - this.y;
-    const distance = Math.sqrt(dx * dx + dy * dy);
-
-    // Always calculate target angle when there's any movement
-    if (distance > 0.1) {
-      this.targetAngle = Math.atan2(dy, dx) * (180 / Math.PI);
-    }
-
-    // Update position with easing if far enough
-    if (distance > 1) {
-      this.x += dx * this.speed;
-      this.y += dy * this.speed;
-      this.isWalking = true;
-    } else {
-      this.isWalking = false;
-    }
-
-    // Always smooth the angle toward target - SLOWER for smoother turning
-    const angleDiff = this.normalizeAngle(this.targetAngle - this.angle);
-    this.angle += angleDiff * 0.05; // Reduced from 0.15 to 0.05 for smoother rotation
-
-    // Normalize the current angle to prevent crazy values
-    this.angle = this.normalizeAngle(this.angle);
-
-    // Update container position
-    this.container.style.left = `${this.x}px`;
-    this.container.style.top = `${this.y}px`;
-
-    // Always update transform
-    this.updateTransform();
-
-    // Add walking animation class
-    if (this.isWalking) {
-      this.container.classList.add("duck-walking");
-    } else {
-      this.container.classList.remove("duck-walking");
-    }
-
-    this.animationFrame = requestAnimationFrame(this.animate);
+export function initDuck(root: HTMLElement) {
+  const buddy = document.createElement('div');
+  buddy.className = 'buddy';
+  buddy.innerHTML = `<p class="buddy-message" role="status" hidden></p><button class="buddy-pet" aria-label="Pet the duck"><span class="buddy-sprite" aria-hidden="true"></span></button><button class="buddy-rest" aria-label="Let the duck nap" title="Let the duck nap"><i class="ph ph-moon" aria-hidden="true"></i></button>`;
+  root.append(buddy);
+  const pet = buddy.querySelector<HTMLButtonElement>('.buddy-pet')!;
+  const rest = buddy.querySelector<HTMLButtonElement>('.buddy-rest')!;
+  const message = buddy.querySelector<HTMLElement>('.buddy-message')!;
+  const motion = matchMedia('(prefers-reduced-motion: reduce)');
+  let sleeping = false;
+  let count = 0;
+  let timeout = 0;
+  let x = Math.max(0, root.clientWidth - 150);
+  let target = x;
+  let frame = 0;
+  let last = performance.now();
+  let wanderAt = last + 8000;
+  const clamp = (value: number) => Math.max(0, Math.min(value, root.clientWidth - 112));
+  const speak = (text: string) => {
+    clearTimeout(timeout);
+    message.textContent = text;
+    message.hidden = false;
+    timeout = window.setTimeout(() => { message.hidden = true; }, 4200);
   };
-
-  public destroy(): void {
-    if (this.animationFrame) {
-      cancelAnimationFrame(this.animationFrame);
-    }
-    this.container.remove();
-  }
-
-  public setSpeed(speed: number): void {
-    this.speed = speed;
-  }
-}
-
-export function initDuck(root: HTMLElement): Duck {
-  return new Duck(root);
+  pet.addEventListener('click', () => {
+    speak(sleeping ? 'Currently buffering a dream.' : ['quack. (that means hello.)', 'You have excellent taste in ducks.', 'I supervise. Mostly.', 'No thoughts. Just webbed feet.'][count++ % 4]);
+    wanderAt = performance.now() + 6000;
+    target = x;
+  });
+  rest.addEventListener('click', () => {
+    sleeping = !sleeping;
+    rest.setAttribute('aria-label', sleeping ? 'Wake the duck' : 'Let the duck nap');
+    rest.title = sleeping ? 'Wake the duck' : 'Let the duck nap';
+    rest.innerHTML = `<i class="ph ph-${sleeping ? 'sun' : 'moon'}" aria-hidden="true"></i>`;
+    buddy.classList.toggle('is-asleep', sleeping);
+    target = x;
+    speak(sleeping ? 'Off the clock. Please hold.' : 'Back from a very important nap.');
+  });
+  const tick = (now: number) => {
+    const dt = Math.min((now - last) / 1000, .05);
+    last = now;
+    x = clamp(x);
+    target = clamp(target);
+    if (!sleeping && !motion.matches && !document.hidden) {
+      if (now > wanderAt) { target = clamp(x + (Math.random() - .5) * 260); wanderAt = now + 10000; }
+      const dx = target - x;
+      if (Math.abs(dx) > 2) {
+        x += Math.sign(dx) * Math.min(Math.abs(dx), dt * 22);
+        buddy.style.setProperty('--duck-facing', dx < 0 ? '-1' : '1');
+      }
+      buddy.classList.toggle('is-walking', Math.abs(dx) > 2);
+    } else buddy.classList.remove('is-walking');
+    buddy.style.left = `${x}px`;
+    message.style.left = `${Math.max(8 - x, Math.min(0, root.clientWidth - x - 205))}px`;
+    frame = requestAnimationFrame(tick);
+  };
+  frame = requestAnimationFrame(tick);
+  return { destroy() { cancelAnimationFrame(frame); clearTimeout(timeout); buddy.remove(); } };
 }
